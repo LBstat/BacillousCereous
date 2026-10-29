@@ -23,48 +23,395 @@ fig_titles <- FALSE     # FALSE: no title/subtitle inside figures (put them in t
 
 ## **Introduction**
 
-### 1.1 Study Objectives
+The aim of this study was to evaluate the behaviour of Bacillus cereus in reconstituted infant milk. Three independent milk samples were prepared with each of two reconstitution methods (FDA and WHO). Tubes were drawn from each sample, inoculated with the pathogen and stored at 4, 10 and 20 °C. At pre-defined time points (0, 6, 24, 30, 36, 48, 54 and 72 h) the numbers of vegetative cells and spores were counted. We assessed the effect of reconstitution method, time and storage temperature on both outcomes.
 
-### 1.2 Data Preparation and Pre-Processing
+Counts were log10-transformed and the design is balanced (three replicates for each combination of time, method and temperature). The time-0 measurement is a single baseline shared by all temperatures.
 
-```{r, exploration.1, fig.height = 14}
+The main limitation concerns independence. Although the three initial milk samples are independent, a separate tube was drawn for each time point and temperature, so no tube was followed over time. The data are therefore neither fully independent nor longitudinal in the usual sense, and this hybrid structure is hard to justify theoretically. All p-values below should be read with this limitation in mind: they are indicative, not conclusive.
+
+### 1.1 Data Preparation and Pre-Processing
+
+Figure 1 shows the log10 counts over time. At 4 and 10 °C vegetative cell counts stay close to the baseline (about 2 log10) for both methods, and the two methods overlap. Spore counts are also flat over time at these temperatures, but WHO lies below FDA at most time points. At 20 °C vegetative cells grow from about 2 to about 8.5 log10 within 48 h. WHO is ahead of FDA at the intermediate times, and the two curves overlap from 48 h onwards. Spores at 20 °C remain close to baseline until 54 h and increase only at 72 h, with much more scatter between replicates than at the other temperatures.
+
+Effects and variability therefore depend on temperature. This suggests analysing each temperature separately instead of pooling them in one model, since a pooled model assumes a single error variance (Table 3).
+
+```{r, exploration}
 source("settings.R")
 source("source_all.R")
 
-data <- read_excel("data/raw/Latte.xlsx")
-setDT(data)
+data <- setNames(lapply(sheets, function(s) load_sheet(path, sheets_xl[[s]], s)), sheets)
 
-data <- data[, .(Farm, Month, Season, Year, `Log CBT`, `Log SCC`, `Risk - IBR`, `Risk - AGAL`, `Risk - PT`)]
-colnames(data) <- c("Farm", "Month", "Season", "Year", "LogCBT", "LogSCC", "RiskIBR", "RiskAGAL", "RiskPT")
+tc <- bind_rows(data) |>
+  mutate(Sheet = factor(Sheet, levels = sheets), x = Hours + ifelse(Treatment == "FDA", -0.8, 0.8))
 
-dt_analysis <- na.omit(data)
+tc_mean <- tc |>
+  group_by(Sheet, Temperature, Treatment, Hours, x) |>
+  summarise(y = mean(y), .groups = "drop")
 
-dt_analysis <- dt_analysis[, c("RiskIBR", "RiskAGAL", "RiskPT") := .(as.factor(RiskIBR), as.factor(RiskAGAL), as.factor(RiskPT))]
+p1 <- ggplot(tc, aes(x, y, colour = Treatment)) +
+  geom_line(data = tc_mean, linewidth = 0.9) +
+  geom_point(size = 2, alpha = 0.9) +
+  facet_grid(Sheet ~ Temperature, scales = "free_y", labeller = labeller(Temperature = temp_lab)) +
+  scale_colour_manual(values = COL) +
+  scale_x_continuous(breaks = HOURS, limits = c(-4, 76)) +
+  labs(
+    title = "Log10 counts of vegetative cells and spores over time at 4, 10 and 20 °C for the FDA and WHO methods",
+    x = "Time since preparation (h)",
+    y = expression(log[10] * " count")
+  ) +
+  base_theme()
 
-levels(dt_analysis$RiskIBR) <- c("Low risk", "Medium risk", "High risk")
-levels(dt_analysis$RiskPT) <- c("Low risk", "Medium risk", "High risk")
-levels(dt_analysis$RiskAGAL) <- c("Low risk", "High risk")
-
-dt_analysis <- dt_analysis[, Season := as.factor(Season)]
-
-levels(dt_analysis$Season) <- c("Winter", "Spring", "Summer", "Autumn")
-
-dt_analysis <- dt_analysis[, Year := factor(Year)][, YearNum := as.numeric(Year) - min(as.numeric(Year))]
-
-quantSCC <- quantile(dt_analysis$LogSCC, probs = seq(0, 1, 0.2), na.rm = TRUE)
-quantCBT <- quantile(dt_analysis$LogCBT, probs = seq(0, 1, 0.2), na.rm = TRUE)
-
-dt_analysis <- dt_analysis[, c("SCCbins", "CBTbins") := .(cut(LogSCC, breaks = quantSCC, include.lowest = TRUE), cut(LogCBT, breaks = quantCBT, include.lowest = TRUE))]
-
-dt_year <- dt_analysis[, .(meanLogCBT = mean(LogCBT), meanLogSCC = mean(LogSCC)), by = .(Year, Season)][order(Year)]
-dt_month <- dt_analysis[, .(meanLogCBT = mean(LogCBT), meanLogSCC = mean(LogSCC)), by = .(Year, Month)][order(Year, Month)]
-
-plot <- ggplot_longitudinal(dt_analysis, save = TRUE)
-plot
+save_fig(p1, "Time courses.png", 12, 10)
+p1
 ```
 
+## **Analysis**
 
+### Three-way ANOVA
 
+We nevertheless fitted the three-way ANOVA (time, method, temperature, all interactions; type III sums of squares, Holm correction over the seven terms) as requested (Tables 1 and 2).
 
+```{r, three-way ANOVA}
+R2 <- sapply(sheets, function(s) {
+  df <- data[[s]]
+  r <- anova_table(df)
+  list(
+    fit = r$fit,
+    tab = r$tab,
+    n = nrow(df),
+    r2 = summary(r$fit)$r.squared,
+    shapiro_p = shapiro.test(residuals(r$fit))$p.value,
+    levene_p = leveneTest(df$y, interaction(df$Time, df$Treatment, df$Temperature), center = median)$`Pr(>F)`[1])
+}, simplify = FALSE)
 
+kableExtra::kable(format_anova(R2[["Vegetative cells"]]$tab), "html", caption = "Table 1: Vegetative cells three-way ANOVA") |>
+  kableExtra::kable_styling(full_width = FALSE, font_size = 10) |>
+  kableExtra::scroll_box(width = "100%", height = "400px")
 
+kableExtra::kable(format_anova(R2[["Spores"]]$tab), "html", caption = "Table 2: Spores three-way ANOVA") |>
+  kableExtra::kable_styling(full_width = FALSE, font_size = 10) |>
+  kableExtra::scroll_box(width = "100%", height = "400px")
+
+save_tab(format_anova(R2[["Vegetative cells"]]$tab), "Vegetative cells three-way ANOVA")
+save_tab(format_anova(R2[["Spores"]]$tab), "Spores three-way ANOVA")
+```
+
+For vegetative cells every term is significant (adjusted p < 0.001), including the three-way interaction. For spores all terms are significant except the three-way interaction (adjusted p = 0.109). The spore Treatment:Temperature interaction (F = 7.25) indicates that the effect of the method depends on temperature.
+
+Every term in this model includes time or temperature, and growth at 20 °C is very large compared with everything else. One dominant effect can therefore make almost all terms significant, so these tables show that effects depend on temperature but not where. The F-values for vegetative cells (e.g. 13,404 for temperature) reflect this large effect relative to the small within-cell variability. They should not be read as measures of practical importance.
+
+### Diagnostics
+
+```{r, three-way ANOVA diagnostics, fig.width = 14}
+sd_by_temp <- do.call(rbind, lapply(sheets, function(s) {
+  df <- data[[s]]
+  data.frame(
+    Sheet = s,
+    Temperature = levels(df$Temperature),
+    pooled_SD = sapply(levels(df$Temperature), function(tp) {
+      dd <- subset(df, Temperature == tp)
+      sqrt(mean(tapply(dd$y, list(dd$Time, dd$Treatment), var)))
+      }
+    )
+  )
+}))
+
+kableExtra::kable(transform(sd_by_temp, pooled_SD = round(pooled_SD, 3)), "html", caption = "Table 3: Pooled within-cell SD (log10) by temperature") |>
+  kableExtra::kable_styling(full_width = FALSE, font_size = 10) |>
+  kableExtra::scroll_box(width = "100%", height = "400px")
+
+save_tab(sd_by_temp, "Pooled sd by temperature")
+
+diag_dat <- bind_rows(lapply(sheets, function(s) residual_data(R2[[s]]$fit, s))) %>%
+  mutate(Sheet = factor(Sheet, levels = sheets))
+
+p2 <- ggplot(diag_dat, aes(qx, qy)) +
+    geom_abline(slope = 1, intercept = 0, colour = "#8a8a8a", linewidth = 0.4) +
+    geom_point(colour = "#444444", size = 1.8, alpha = 0.85) +
+    facet_wrap(~ Sheet, nrow = 1, scales = "free") +
+    labs(
+      title = "Diagnostics for the three-way model. Top: normal Q–Q plots. Bottom: residuals versus fitted values (log10), by temperature",
+      x = "Theoretical quantiles (normal)",
+      y = "Standardised residuals"
+    ) +
+    base_theme()
+
+p3 <- ggplot(diag_dat, aes(fitted, resid, shape = Temperature)) +
+    geom_hline(yintercept = 0, colour = "#8a8a8a", linewidth = 0.4) +
+    geom_point(colour = "#444444", size = 2, alpha = 0.85) +
+    facet_wrap(~ Sheet, nrow = 1, scales = "free") +
+    scale_x_continuous(breaks = function(l) seq(ceiling(l[1]), floor(l[2]), by = 1)) +
+    scale_shape_manual(values = c("4" = 16, "10" = 15, "20" = 17), labels = temp_lab, name = "Temperature") +
+    labs(
+      x = expression("Fitted values (" * log[10] * ")"),
+      y = "Residuals"
+    ) +
+    base_theme()
+
+save_fig((p2 / p3), "Diagnostics.png", 14, 10)
+(p2 / p3)
+```
+
+For vegetative cells the normal Q–Q plot follows the reference line closely, apart from one residual in the upper tail (standardised residual ≈ 3). The spread of the residuals is similar across the fitted values (within about ±0.4). For spores the Q–Q plot is S-shaped. A central band of residuals lies very close to zero and the tails are heavy (standardised residuals from about −4.5 to +4), so normality clearly does not hold. The residual spread is also larger at 20 °C (up to about ±1) than at 4 and 10 °C (mostly within ±0.5), consistent with the pooled SD in Table 3 (0.42 vs about 0.20).
+
+Most fitted values lie around 2 log10, because counts are flat at 4 and 10 °C. The residual plots are therefore dominated by these points, with few observations at higher fitted values. With three replicates per cell, formal tests of these assumptions have little power.
+
+### Two-way ANOVA within each temperature
+
+Within each temperature we fitted a two-way ANOVA (time × method) with its own error variance (32 residual degrees of freedom), with Holm correction over the nine tests per outcome (Table 4).
+
+```{r, two-way ANOVA}
+# 3.1 two-way ANOVA within each temperature (Holm over 9 tests per sheet)
+R31 <- sapply(sheets, function(s) {
+  d <- data[[s]]
+  res <- lapply(levels(d$Temperature), function(tp) anova_table(droplevels(subset(d, Temperature == tp)), y ~ Time * Treatment, holm = FALSE))
+  names(res) <- levels(d$Temperature)
+
+  tab <- do.call(rbind, lapply(names(res), function(tp) cbind(Temperature = tp, res[[tp]]$tab)))
+  eff <- tab$Effect != "Residuals"
+  tab$`adj p value`[eff] <- p.adjust(tab$`Pr(>F)`[eff], method = "holm")
+
+  fits <- lapply(res, `[[`, "fit")
+  gof <- data.frame(
+    Temperature = names(fits),
+    residual_SD = sapply(fits, function(f) summary(f)$sigma),
+    Shapiro_p = sapply(fits, function(f) shapiro.test(residuals(f))$p.value)
+  )
+
+  list(
+    tab = tab,
+    gof = gof,
+    fits = fits
+  )
+}, simplify = FALSE)
+
+fits_T <- lapply(R31, `[[`, "fits")
+
+tab31_list <- lapply(R31, function(r) {
+  tab <- r$tab
+  dfres <- setNames(tab$dgf[tab$Effect == "Residuals"], tab$Temperature[tab$Effect == "Residuals"])
+  tab <- tab[tab$Effect != "Residuals", ]
+  data.frame(
+    Temperature = paste(tab$Temperature, DEG),
+    Effect = tab$Effect,
+    dgf = paste0(tab$dgf, ", ", dfres[as.character(tab$Temperature)]),
+    `F value` = sprintf("%.2f", tab$`F value`),
+    `p value` = fp(tab$`Pr(>F)`),
+    `adj p value` = fp(tab$`adj p value`),
+    check.names = FALSE)
+})
+
+tab31_wide <- cbind(tab31_list[[1]], tab31_list[[2]][, c("F value", "p value", "adj p value")])
+save_tab(tab31_wide, "Two-way ANOVA (Time x Treatment) within each temperature")
+
+kableExtra::kable(tab31_wide, "html", align = "llrrrrrrr", col.names = c("Temperature", "Effect", "dgf", rep(c("F value", "p value", "adj p value"), 2)), caption = "Table 4: Two-way ANOVA (Time x Treatment) within each temperature") |>
+  kableExtra::add_header_above(c(" " = 3, setNames(c(3, 3), names(R31)))) |>
+  kableExtra::collapse_rows(columns = 1, valign = "top") |>
+  kableExtra::kable_styling(full_width = FALSE, font_size = 10)
+
+# 3.2 effect of time within each temperature x treatment (Holm over 6 tests per sheet)
+R32 <- sapply(sheets, function(s) {
+  tt <- do.call(rbind, lapply(names(fits_T[[s]]), function(tp) {
+    j <- as.data.frame(joint_tests(fits_T[[s]][[tp]], by = "Treatment"))
+    j <- j[j$`model term` == "Time", ]; j$Temperature <- tp
+    j
+  }))
+
+  tt$p_Holm <- p.adjust(tt$p.value, "holm")
+  tt
+}, simplify = FALSE)
+
+# 3.3 change from time 0 (Dunnett)
+R33 <- sapply(sheets, function(s) {
+  c3 <- do.call(rbind, lapply(names(fits_T[[s]]), function(tp) {
+    c0 <- contrast(emmeans(fits_T[[s]][[tp]], ~ Time | Treatment), method = "trt.vs.ctrl", ref = 1, adjust = "dunnett")
+    x <- as.data.frame(summary(c0, infer = c(TRUE, TRUE))); x$Temperature <- tp; x
+  }))
+
+  c3$Sheet <- s
+  c3$hour <- sub("^Time", "", sub(" - .*", "", as.character(c3$contrast)))
+  c3$group <- paste(c3$Temperature, DEG, c3$Treatment)
+  c3$cell <- sprintf("%+.2f%s", c3$estimate, ifelse(c3$p.value < alpha, "*", ""))
+  c3
+}, simplify = FALSE)
+
+d33 <- bind_rows(R33) |>
+  mutate(
+    Sheet = factor(Sheet, levels = sheets),
+    Th = as.integer(hour),
+    Temperature = factor(Temperature, levels = c("4", "10", "20")),
+    x = Th + ifelse(Treatment == "FDA", -0.8, 0.8)
+  )
+
+p4 <- ggplot(d33, aes(x, estimate, colour = Treatment)) +
+  geom_hline(yintercept = 0, colour = "#8a8a8a", linewidth = 0.4) +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0, linewidth = 0.5) +
+  geom_point(size = 2.3) +
+  facet_grid(Sheet ~ Temperature, scales = "free_y", labeller = labeller(Temperature = temp_lab)) +
+  scale_colour_manual(values = COL) +
+  scale_x_continuous(breaks = HOURS[-1], limits = c(0, 76)) +
+  labs(
+    title = "Change in log10 count from time 0 (Dunnett contrasts against baseline) for each method and temperature",
+    x = "Time since preparation (h)",
+    y = expression("Change from time 0 (" * log[10] * ")")
+  ) +
+  base_theme()
+
+save_fig(p4, "Change from time 0.png", 12, 10)
+p4
+
+# 3.4 WHO - FDA at each time (Holm over 24 comparisons per sheet)
+R34 <- sapply(sheets, function(s) {
+  ct <- do.call(rbind, lapply(names(fits_T[[s]]), function(tp) {
+    c0 <- contrast(emmeans(fits_T[[s]][[tp]], ~ Treatment | Time), method = "revpairwise", adjust = "none")
+    x <- as.data.frame(summary(c0, infer = c(TRUE, TRUE))); x$Temperature <- tp; x
+  }))
+
+  ct$Sheet <- s
+  ct$p_Holm <- p.adjust(ct$p.value, "holm")
+  ct$cell <- sprintf("%+.2f%s", ct$estimate, ifelse(ct$p_Holm < alpha, "*", ""))
+  ct
+}, simplify = FALSE)
+
+d34 <- bind_rows(R34) |>
+  mutate(
+    Sheet = factor(Sheet, levels = sheets),
+    Th = as.integer(as.character(Time)),
+    Temperature = factor(Temperature, levels = c("4", "10", "20")),
+    sig = ifelse(p_Holm < alpha, "p < 0.05 (Holm)", "n.s.")
+  )
+
+p5 <- ggplot(d34, aes(Th, estimate)) +
+  geom_hline(yintercept = 0, colour = "#8a8a8a", linewidth = 0.4) +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0, colour = "#444444", linewidth = 0.5) +
+  geom_point(aes(shape = sig), size = 2.6, colour = "#444444", fill = "#444444", stroke = 0.8) +
+  facet_grid(Sheet ~ Temperature, scales = "free_y", labeller = labeller(Temperature = temp_lab)) +
+  scale_shape_manual(values = c("p < 0.05 (Holm)" = 16, "n.s." = 1)) +
+  scale_x_continuous(breaks = HOURS, limits = c(-3, 75)) +
+  labs(
+    title = "Difference between methods (WHO − FDA, log10) at each time with confidence intervals",
+    x = "Time since preparation (h)",
+    y = expression("WHO - FDA (" * log[10] * ")")
+  ) +
+  base_theme()
+
+save_fig(p5, "WHO - FDA.png", 12, 10)
+p5
+```
+
+Vegetative cells. At 4 and 10 °C no effect survives the correction (smallest adjusted p = 0.185), and all intervals in Figures 2 and 3 include zero. At 20 °C time (F = 1264), method (F = 260) and their interaction (F = 32.7) are highly significant. Counts increase by about 6.5 log10 by 48 h for both methods (Figure 2). WHO is already about 1 log10 above baseline at 6 h, whereas FDA is still at baseline. WHO − FDA is significant at 6, 24, 30 and 36 h (about +1.2, +2.0, +2.0 and +1.1 log10), and not from 48 h onwards, when the curves coincide (Figure 3).
+
+Spores at 20 °C. Time is significant (F = 25.9) and the method is not (F < 0.01, p = 0.963). The only clear increase over baseline is at 72 h (about +2.5 log10 for both methods). WHO shows a large but imprecise increase at 30 h (about +1.3 from baseline). This rests on two of three replicates, and the difference between methods at that time is not significant after correction (Figure 3).
+
+Spores at 4 and 10 °C. The method is significant (F = 23.1 and 56.7, adjusted p < 0.001), time is not, and there is no interaction. Every point estimate of WHO − FDA is negative, but only three of the 16 single-time comparisons survive the correction (4 °C at 48 h; 10 °C at 6 h and 48 h). The ANOVA detects the offset because it combines all time points. The offset is already present at time 0 (about −0.45 log10), before any storage, so it cannot be attributed to the storage temperature. Whether it comes from the reconstitution method itself cannot be determined from these data.
+
+“Not significant” should not be read as “no difference”: with three replicates per cell, small differences cannot be excluded.
+
+## **Conclusions**
+
+- Growth of B. cereus occurs essentially only at 20 °C. Vegetative cells increase by about 6.5 log10 within 48 h. Spores increase only at 72 h, by about 2.5 log10.
+
+- At 20 °C the WHO method gives faster growth of vegetative cells (significantly higher between 6 and 36 h), and both methods reach the same plateau from 48 h. For spores at 20 °C no difference between methods was detected.
+
+- At 4 and 10 °C no change over time was detected for either outcome, and no method difference for vegetative cells. For spores WHO counts are lower than FDA at all time points, by about 0.25 log10 at 4 °C and 0.44 log10 at 10 °C. This offset is already present at time 0 and persists when time 0 is excluded, so it appears to reflect initial counts rather than behaviour during storage.
+
+A single pooled model is not appropriate, because effects and error variance depend on temperature. The stratified analysis is the main analysis, and the three-way ANOVA is reported for completeness. The results are indicative. The main limitations are the non-independence of tubes drawn from the same milk sample, only three replicates per cell, and non-normal residuals and unequal variances for spores. Borderline findings, such as the spore increase at 30 h and 20 °C, should be confirmed on additional data.
+
+## **Appendix**
+
+### Sensitivity to the time-0 baseline
+
+Time 0 is a single measurement copied to all temperatures, so the pooled model counts it three times. For spores the two methods also already differ at baseline. We therefore refitted the models without time 0 (Tables 5 and 6, Figure 6).
+
+```{r, sensitive analysis}
+# Appendix: sensitivity to the time-0 baseline (time 0 removed)
+R_A1 <- sapply(sheets, function(s) {
+  d0 <- droplevels(subset(data[[s]], Time != "0"))
+
+  # three-way ANOVA with vs without time 0 (Holm over 7 terms)
+  r0 <- anova_table(d0)
+  a <- R2[[s]]$tab; b <- r0$tab
+  keep <- a$Effect != "Residuals"
+  three_way <- data.frame(
+    Effect = a$Effect[keep],
+    `F` = sprintf("%.2f", a$`F value`[keep]),
+    `p (Holm)` = fp(a$`adj p value`[keep]),
+    `F ` = sprintf("%.2f", b$`F value`[keep]),
+    `p (Holm) ` = fp(b$`adj p value`[keep]),
+    check.names = FALSE)
+
+  # two-way ANOVA within each temperature (Holm over 9 tests per sheet)
+  per_temp <- do.call(rbind, lapply(levels(d0$Temperature), function(tp) cbind(Temperature = temp_lab(tp), anova_table(droplevels(subset(d0, Temperature == tp)), y ~ Time * Treatment, holm = FALSE)$tab)))
+  eff <- per_temp$Effect != "Residuals"
+
+  per_temp$p_adj <- NA_real_
+  per_temp$p_adj[eff] <- p.adjust(per_temp$`Pr(>F)`[eff], method = "holm")
+  per_temp <- per_temp[eff, ]
+  per_temp <- data.frame(
+    Temperature = per_temp$Temperature, Effect = per_temp$Effect,
+    `F` = sprintf("%.2f", per_temp$`F value`),
+    `p (Holm)` = fp(per_temp$p_adj),
+    check.names = FALSE)
+
+  list(
+    three_way = three_way,
+    per_temp = per_temp,
+    shapiro_p = shapiro.test(residuals(r0$fit))$p.value
+  )
+}, simplify = FALSE)
+
+kableExtra::kable(R_A1[["Vegetative cells"]]$three_way, "html", caption = "Table 5: Vegetative cells three-way ANOVA") |>
+    kableExtra::add_header_above(c(" " = 1, "With time 0" = 2, "Without time 0" = 2)) |>
+  kableExtra::kable_styling(full_width = FALSE, font_size = 10) |>
+  kableExtra::scroll_box(width = "100%", height = "400px")
+
+kableExtra::kable(R_A1[["Spores"]]$three_way, "html", caption = "Table 6: Spores three-way ANOVA") |>
+    kableExtra::add_header_above(c(" " = 1, "With time 0" = 2, "Without time 0" = 2)) |>
+  kableExtra::kable_styling(full_width = FALSE, font_size = 10) |>
+  kableExtra::scroll_box(width = "100%", height = "400px")
+
+# Appendix figure: WHO - FDA with vs without time 0, per temperature
+A1_est <- bind_rows(lapply(sheets, function(s) bind_rows(lapply(c("With time 0", "Without time 0"), function(v) {
+  d <- if (v == "With time 0") data[[s]] else droplevels(subset(data[[s]], Time != "0"))
+  bind_rows(lapply(levels(d$Temperature), function(tp) {
+    dt <- droplevels(subset(d, Temperature == tp))
+    fit <- lm(y ~ Time * Treatment, data = dt)
+
+    e <- summary(contrast(emmeans(fit, ~ Treatment, data = dt), "revpairwise"), infer = TRUE)
+
+    data.frame(
+      Sheet = s,
+      Temperature = tp,
+      Baseline = v,
+      estimate = e$estimate,
+      lower = e$lower.CL,
+      upper = e$upper.CL
+    )
+  }))
+}))))
+
+A1_est <- A1_est |>
+  mutate(
+    Sheet = factor(Sheet, levels = sheets),
+    Temperature = factor(Temperature, levels = c("4", "10", "20")),
+    Baseline = factor(Baseline, levels = c("With time 0", "Without time 0"))
+  )
+
+p6 <- ggplot(A1_est, aes(Temperature, estimate, colour = Baseline, shape = Baseline)) +
+  geom_hline(yintercept = 0, colour = "#8a8a8a", linewidth = 0.4) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), position = position_dodge(width = 0.5), size = 0.5) +
+  facet_wrap(~ Sheet, nrow = 1) +
+  scale_x_discrete(labels = temp_lab) +
+  scale_colour_manual(values = c("With time 0" = "#444444", "Without time 0" = COL[["WHO"]])) +
+  labs(
+    title = "Difference between methods (WHO − FDA) within each temperature, estimated with and without the time-0 baseline",
+    x = "Temperature",
+    y = expression("WHO - FDA, mean over times (" * log[10] * ")")
+  )+
+  base_theme()
+
+save_fig(p6, "WHO - FDA with vs without time 0, per temperature.png", 12, 10)
+p6
+```
+
+For vegetative cells all terms remain significant. For spores the method effect drops from F = 23.9 to 14.0 but remains significant (adjusted p = 0.001), and the three-way interaction remains non-significant. Figure A1 shows the method difference averaged over time within each temperature, with and without time 0. The estimates and intervals nearly coincide: for spores about −0.27 vs −0.25 (4 °C), −0.44 vs −0.44 (10 °C) and about 0 vs +0.07 (20 °C), and for vegetative cells at 20 °C +0.84 vs +0.94. The baseline therefore contributes to the spore difference but does not drive it.
