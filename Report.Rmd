@@ -1,8 +1,7 @@
 ---
-title: 'Integrative Modeling of Milk Quality: Evaluating the Impact of Herd Health
-  Risks on Bacterial Loads and Somatic Cell Counts'
+title: 'Bacillus cereus in reconstituted infant milk: statistical analysis'
 author: "Luca Bernardi"
-date: "2026-02-27"
+date: "2026-10-29"
 output: html_document
 ---
 
