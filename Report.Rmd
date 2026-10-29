@@ -1,0 +1,70 @@
+---
+title: 'Integrative Modeling of Milk Quality: Evaluating the Impact of Herd Health
+  Risks on Bacterial Loads and Somatic Cell Counts'
+author: "Luca Bernardi"
+date: "2026-02-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 12,
+  fig.height = 10,
+  echo = FALSE
+)
+
+# Don't change this setup unless needed!
+alpha <- 0.05           # significance threshold (stars, filled symbols)
+save_tables <- TRUE     # write main results to CSV
+fig_titles <- FALSE     # FALSE: no title/subtitle inside figures (put them in the legend)
+```
+
+## **Introduction**
+
+### 1.1 Study Objectives
+
+### 1.2 Data Preparation and Pre-Processing
+
+```{r, exploration.1, fig.height = 14}
+source("settings.R")
+source("source_all.R")
+
+data <- read_excel("data/raw/Latte.xlsx")
+setDT(data)
+
+data <- data[, .(Farm, Month, Season, Year, `Log CBT`, `Log SCC`, `Risk - IBR`, `Risk - AGAL`, `Risk - PT`)]
+colnames(data) <- c("Farm", "Month", "Season", "Year", "LogCBT", "LogSCC", "RiskIBR", "RiskAGAL", "RiskPT")
+
+dt_analysis <- na.omit(data)
+
+dt_analysis <- dt_analysis[, c("RiskIBR", "RiskAGAL", "RiskPT") := .(as.factor(RiskIBR), as.factor(RiskAGAL), as.factor(RiskPT))]
+
+levels(dt_analysis$RiskIBR) <- c("Low risk", "Medium risk", "High risk")
+levels(dt_analysis$RiskPT) <- c("Low risk", "Medium risk", "High risk")
+levels(dt_analysis$RiskAGAL) <- c("Low risk", "High risk")
+
+dt_analysis <- dt_analysis[, Season := as.factor(Season)]
+
+levels(dt_analysis$Season) <- c("Winter", "Spring", "Summer", "Autumn")
+
+dt_analysis <- dt_analysis[, Year := factor(Year)][, YearNum := as.numeric(Year) - min(as.numeric(Year))]
+
+quantSCC <- quantile(dt_analysis$LogSCC, probs = seq(0, 1, 0.2), na.rm = TRUE)
+quantCBT <- quantile(dt_analysis$LogCBT, probs = seq(0, 1, 0.2), na.rm = TRUE)
+
+dt_analysis <- dt_analysis[, c("SCCbins", "CBTbins") := .(cut(LogSCC, breaks = quantSCC, include.lowest = TRUE), cut(LogCBT, breaks = quantCBT, include.lowest = TRUE))]
+
+dt_year <- dt_analysis[, .(meanLogCBT = mean(LogCBT), meanLogSCC = mean(LogSCC)), by = .(Year, Season)][order(Year)]
+dt_month <- dt_analysis[, .(meanLogCBT = mean(LogCBT), meanLogSCC = mean(LogSCC)), by = .(Year, Month)][order(Year, Month)]
+
+plot <- ggplot_longitudinal(dt_analysis, save = TRUE)
+plot
+```
+
+
+
+
+
+
