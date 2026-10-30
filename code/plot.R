@@ -23,5 +23,3 @@ base_theme <- function(base_size = 11) {
       plot.margin = margin(12, 16, 10, 16)
     )
 }
-
-
