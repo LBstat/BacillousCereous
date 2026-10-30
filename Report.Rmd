@@ -17,7 +17,7 @@ knitr::opts_chunk$set(
 # Don't change this setup unless needed!
 alpha <- 0.05           # significance threshold (stars, filled symbols)
 save_tables <- TRUE     # write main results to CSV
-fig_titles <- FALSE     # FALSE: no title/subtitle inside figures (put them in the legend)
+save_figures <- TRUE    # save main figures
 ```
 
 ## **Introduction**

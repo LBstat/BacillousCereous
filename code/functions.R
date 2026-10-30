@@ -73,11 +73,11 @@ fp <- function(p) ifelse(is.na(p), "", ifelse(p < 0.001, "<0.001", sprintf("%.3f
 temp_lab  <- function(x) paste(x, DEG)
 
 save_tab <- function(df, name) {
-  if (save_tables) write.csv(df, file.path("data/results", paste0(name, ".csv")), row.names = FALSE)
+  if (save_tables) write.csv2(df, file.path("data/results", paste0(name, ".csv")), row.names = FALSE)
 }
 
 save_fig <- function(plot, name, w, h) {
-  ggsave(file.path("plot", name), plot, width = w, height = h, dpi = 300, bg = "white")
+  if (save_figures) ggsave(file.path("plot", name), plot, width = w, height = h, dpi = 300, bg = "white")
 }
 
 format_anova <- function(tab) {
